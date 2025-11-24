@@ -1,0 +1,5 @@
+Hello, ESP32!
+This is a small test file for UART file transfer testing.
+Line 3
+Line 4
+Line 5

@@ -542,6 +542,9 @@ class InteractiveShell
 end
 
 # ===== CLI =====
+# Only run CLI if this file is executed directly (not when required as a library)
+if __FILE__ == $0
+
 def usage!
   puts <<~USAGE
     Usage:
@@ -660,3 +663,5 @@ when "transfer"
 else
   usage!
 end
+
+end # if __FILE__ == $0

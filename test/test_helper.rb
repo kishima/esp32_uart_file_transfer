@@ -122,20 +122,31 @@ module TestHelper
     refute entries.any? { |e| e["n"] == filename },
            msg || "Remote file #{remote_path} should not exist"
   end
+
+  # Wrap test execution with timeout
+  def run_with_timeout(&block)
+    Timeout.timeout(TEST_TIMEOUT) do
+      block.call
+    end
+  rescue Timeout::Error
+    flunk "Test exceeded #{TEST_TIMEOUT} second timeout"
+  end
 end
 
-# Add timeout support to all Minitest::Runnable classes
+# Add timeout to all test methods automatically
 module Minitest
   class Runnable
     alias_method :original_run, :run
 
     def run
-      result = nil
-      Timeout.timeout(TestHelper::TEST_TIMEOUT) do
-        result = original_run
+      if self.class.name =~ /Test/
+        Timeout.timeout(TestHelper::TEST_TIMEOUT) do
+          original_run
+        end
+      else
+        original_run
       end
-      result
-    rescue Timeout::Error => e
+    rescue Timeout::Error
       self.failures << Minitest::UnexpectedError.new(
         RuntimeError.new("Test exceeded #{TestHelper::TEST_TIMEOUT} second timeout")
       )

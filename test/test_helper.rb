@@ -2,6 +2,7 @@ require 'minitest/autorun'
 require 'minitest/reporters'
 require 'fileutils'
 require 'digest'
+require 'timeout'
 
 # Use progress reporter for cleaner output
 Minitest::Reporters.use! Minitest::Reporters::ProgressReporter.new
@@ -13,6 +14,9 @@ module TestHelper
   # Test configuration
   FIXTURES_DIR = File.expand_path("fixtures/test_files", __dir__)
   TEMP_DIR = File.expand_path("tmp", __dir__)
+
+  # Test timeout (30 seconds per test)
+  TEST_TIMEOUT = 30
 
   # Get serial port from environment or skip tests
   def serial_port
@@ -67,15 +71,15 @@ module TestHelper
   end
 
   # Remote test directory (cleanup after tests)
-  REMOTE_TEST_DIR = "/flash/test"
+  REMOTE_TEST_DIR = "/home"
 
   # Setup remote test environment
   def setup_remote_test_dir(client)
     begin
       # Try to create test directory (may fail if exists)
-      client.r_cd("/flash")
+      client.r_cd("/home")
     rescue => e
-      # Ignore errors, just ensure we're in /flash
+      # Ignore errors, just ensure we're in /home
     end
   end
 
@@ -83,10 +87,10 @@ module TestHelper
   def cleanup_remote_test_dir(client)
     begin
       # Remove test files one by one
-      entries = client.r_ls("/flash")
+      entries = client.r_ls("/home")
       entries.each do |entry|
         if entry["n"].start_with?("test_")
-          client.r_rm("/flash/#{entry["n"]}")
+          client.r_rm("/home/#{entry["n"]}")
         end
       end
     rescue => e
@@ -117,5 +121,25 @@ module TestHelper
     entries = client.r_ls(dir)
     refute entries.any? { |e| e["n"] == filename },
            msg || "Remote file #{remote_path} should not exist"
+  end
+end
+
+# Add timeout support to all Minitest::Runnable classes
+module Minitest
+  class Runnable
+    alias_method :original_run, :run
+
+    def run
+      result = nil
+      Timeout.timeout(TestHelper::TEST_TIMEOUT) do
+        result = original_run
+      end
+      result
+    rescue Timeout::Error => e
+      self.failures << Minitest::UnexpectedError.new(
+        RuntimeError.new("Test exceeded #{TestHelper::TEST_TIMEOUT} second timeout")
+      )
+      self
+    end
   end
 end

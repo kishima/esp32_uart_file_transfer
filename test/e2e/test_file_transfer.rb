@@ -6,7 +6,7 @@ class TestFileTransfer < Minitest::Test
   def setup
     super
     @client = create_client
-    wait_and_sync(@client)
+    # wait_and_sync(@client)  # Disabled: beacon not enabled in firmware
     setup_remote_test_dir(@client)
   end
 
@@ -20,7 +20,7 @@ class TestFileTransfer < Minitest::Test
 
   def test_upload_small_text_file
     local_file = fixture_path("small_text.txt")
-    remote_file = "/flash/test_small.txt"
+    remote_file = "/home/test_small.txt"
 
     @client.put(local_file, remote_file)
 
@@ -34,21 +34,21 @@ class TestFileTransfer < Minitest::Test
 
   def test_upload_large_binary_file
     local_file = fixture_path("large_binary.bin")
-    remote_file = "/flash/test_large.bin"
+    remote_file = "/home/test_large.bin"
 
     @client.put(local_file, remote_file, chunk: 1024)
 
     assert_remote_file_exists(@client, remote_file)
 
     # Verify size
-    entries = @client.r_ls("/flash")
+    entries = @client.r_ls("/home")
     entry = entries.find { |e| e["n"] == "test_large.bin" }
     assert_equal File.size(local_file), entry["s"], "File size should match"
   end
 
   def test_upload_with_custom_chunk_size
     local_file = fixture_path("small_text.txt")
-    remote_file = "/flash/test_chunk.txt"
+    remote_file = "/home/test_chunk.txt"
 
     # Test with different chunk sizes
     [512, 2048].each do |chunk_size|
@@ -63,7 +63,7 @@ class TestFileTransfer < Minitest::Test
   def test_download_small_file
     # First upload a file
     local_file = fixture_path("small_text.txt")
-    remote_file = "/flash/test_download.txt"
+    remote_file = "/home/test_download.txt"
     @client.put(local_file, remote_file)
 
     # Download it
@@ -76,7 +76,7 @@ class TestFileTransfer < Minitest::Test
   def test_download_large_binary_file
     # First upload a large file
     local_file = fixture_path("large_binary.bin")
-    remote_file = "/flash/test_download_large.bin"
+    remote_file = "/home/test_download_large.bin"
     @client.put(local_file, remote_file, chunk: 1024)
 
     # Download it
@@ -87,7 +87,7 @@ class TestFileTransfer < Minitest::Test
   end
 
   def test_download_nonexistent_file
-    remote_file = "/flash/nonexistent_file.txt"
+    remote_file = "/home/nonexistent_file.txt"
     downloaded = temp_path("should_not_exist.txt")
 
     assert_raises(RuntimeError) do
@@ -104,7 +104,7 @@ class TestFileTransfer < Minitest::Test
     temp_upload = temp_path("upload_test.txt")
     File.write(temp_upload, "Round trip test\n" * 100)
 
-    remote_file = "/flash/test_roundtrip.txt"
+    remote_file = "/home/test_roundtrip.txt"
     temp_download = temp_path("download_test.txt")
 
     # Upload
@@ -119,7 +119,7 @@ class TestFileTransfer < Minitest::Test
 
   def test_upload_download_round_trip_500kb
     local_file = fixture_path("large_binary.bin")
-    remote_file = "/flash/test_roundtrip_large.bin"
+    remote_file = "/home/test_roundtrip_large.bin"
     downloaded = temp_path("roundtrip_large.bin")
 
     # Upload 500KB file
@@ -141,7 +141,7 @@ class TestFileTransfer < Minitest::Test
     local_file2 = temp_path("different.txt")
     File.write(local_file2, "Different content\n" * 50)
 
-    remote_file = "/flash/test_overwrite.txt"
+    remote_file = "/home/test_overwrite.txt"
 
     # Upload first file
     @client.put(local_file1, remote_file)
@@ -159,7 +159,7 @@ class TestFileTransfer < Minitest::Test
 
   def test_transfer_up_direction
     local_file = fixture_path("small_text.txt")
-    remote_file = "/flash/test_transfer_up.txt"
+    remote_file = "/home/test_transfer_up.txt"
 
     @client.transfer("up", local: local_file, remote: remote_file)
 
@@ -169,7 +169,7 @@ class TestFileTransfer < Minitest::Test
   def test_transfer_down_direction
     # First upload
     local_file = fixture_path("small_text.txt")
-    remote_file = "/flash/test_transfer_down.txt"
+    remote_file = "/home/test_transfer_down.txt"
     @client.put(local_file, remote_file)
 
     # Then download via transfer
@@ -181,7 +181,7 @@ class TestFileTransfer < Minitest::Test
 
   def test_transfer_invalid_direction
     assert_raises(RuntimeError) do
-      @client.transfer("invalid", local: "test.txt", remote: "/flash/test.txt")
+      @client.transfer("invalid", local: "test.txt", remote: "/home/test.txt")
     end
   end
 end

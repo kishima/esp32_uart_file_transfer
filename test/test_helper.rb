@@ -76,25 +76,54 @@ module TestHelper
   # Setup remote test environment
   def setup_remote_test_dir(client)
     begin
-      # Try to create test directory (may fail if exists)
+      # Change to /home directory
       client.r_cd("/home")
+
+      # Clean up any leftover test files from previous runs
+      begin
+        entries = client.r_ls("/home")
+        entries.each do |entry|
+          if entry["n"].start_with?("test_")
+            begin
+              Timeout.timeout(5) do
+                client.r_rm("/home/#{entry["n"]}")
+              end
+            rescue => e
+              # Ignore individual file cleanup errors
+              warn "Warning: Failed to cleanup #{entry["n"]}: #{e.message}"
+            end
+          end
+        end
+      rescue => e
+        # Ignore cleanup errors, continue with test
+        warn "Warning: Failed to list/cleanup test files: #{e.message}"
+      end
     rescue => e
-      # Ignore errors, just ensure we're in /home
+      # If can't cd to /home, that's a real problem
+      raise "Failed to setup remote test dir: #{e.message}"
     end
   end
 
   # Cleanup remote test files
   def cleanup_remote_test_dir(client)
     begin
-      # Remove test files one by one
       entries = client.r_ls("/home")
       entries.each do |entry|
         if entry["n"].start_with?("test_")
-          client.r_rm("/home/#{entry["n"]}")
+          begin
+            # Add timeout for each file removal
+            Timeout.timeout(10) do
+              client.r_rm("/home/#{entry["n"]}")
+            end
+          rescue Timeout::Error
+            warn "Warning: Timeout removing #{entry["n"]}"
+          rescue => e
+            warn "Warning: Failed to remove #{entry["n"]}: #{e.message}"
+          end
         end
       end
     rescue => e
-      # Ignore cleanup errors
+      # Ignore cleanup errors at teardown
       warn "Warning: Failed to cleanup remote test dir: #{e.message}"
     end
   end

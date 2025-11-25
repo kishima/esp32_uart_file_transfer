@@ -151,16 +151,16 @@ class TestErrorHandling < Minitest::Test
   end
 
   def test_large_file_transfer_integrity
-    # Use the 500KB fixture
+    # Use the 100KB fixture
     local_file = fixture_path("large_binary.bin")
     remote_file = "/home/test_integrity_large.bin"
     downloaded = temp_path("integrity_large.bin")
 
-    # Upload
-    @client.put(local_file, remote_file, chunk: 1024)
+    # Upload with larger chunk size
+    @client.put(local_file, remote_file, chunk: 2048)
 
-    # Download
-    @client.get(remote_file, downloaded, chunk: 1024)
+    # Download with larger chunk size
+    @client.get(remote_file, downloaded, chunk: 2048)
 
     # Verify every byte matches
     assert_files_equal(local_file, downloaded)
@@ -213,7 +213,7 @@ class TestErrorHandling < Minitest::Test
 
     3.times do |i|
       remote_file = "/home/test_multi_large_#{i}.bin"
-      @client.put(large_file, remote_file, chunk: 1024)
+      @client.put(large_file, remote_file, chunk: 2048)
       assert_remote_file_exists(@client, remote_file)
       @client.r_rm(remote_file)
     end

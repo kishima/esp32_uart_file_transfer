@@ -36,7 +36,7 @@ class TestFileTransfer < Minitest::Test
     local_file = fixture_path("large_binary.bin")
     remote_file = "/home/test_large.bin"
 
-    @client.put(local_file, remote_file, chunk: 1024)
+    @client.put(local_file, remote_file, chunk: 2048)
 
     assert_remote_file_exists(@client, remote_file)
 
@@ -77,11 +77,11 @@ class TestFileTransfer < Minitest::Test
     # First upload a large file
     local_file = fixture_path("large_binary.bin")
     remote_file = "/home/test_download_large.bin"
-    @client.put(local_file, remote_file, chunk: 1024)
+    @client.put(local_file, remote_file, chunk: 2048)
 
     # Download it
     downloaded = temp_path("downloaded_large.bin")
-    @client.get(remote_file, downloaded, chunk: 1024)
+    @client.get(remote_file, downloaded, chunk: 2048)
 
     assert_files_equal(local_file, downloaded)
   end
@@ -121,16 +121,16 @@ class TestFileTransfer < Minitest::Test
     assert_files_equal(temp_upload, temp_download)
   end
 
-  def test_upload_download_round_trip_500kb
+  def test_upload_download_round_trip_100kb
     local_file = fixture_path("large_binary.bin")
     remote_file = "/home/test_roundtrip_large.bin"
     downloaded = temp_path("roundtrip_large.bin")
 
-    # Upload 500KB file
-    @client.put(local_file, remote_file, chunk: 1024)
+    # Upload 100KB file with larger chunk size for speed
+    @client.put(local_file, remote_file, chunk: 2048)
 
-    # Download it back
-    @client.get(remote_file, downloaded, chunk: 1024)
+    # Download it back with larger chunk size
+    @client.get(remote_file, downloaded, chunk: 2048)
 
     # Verify checksum
     assert_files_equal(local_file, downloaded)

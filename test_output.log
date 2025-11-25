@@ -1,0 +1,6 @@
+/home/kishima/.rbenv/versions/3.3.6/bin/ruby -I"lib:test" /home/kishima/.rbenv/versions/3.3.6/lib/ruby/gems/3.3.0/gems/rake-13.3.1/lib/rake/rake_test_loader.rb "test/e2e/test_error_handling.rb" "test/e2e/test_file_transfer.rb" "test/e2e/test_remote_commands.rb" 
+Started with run options --seed 930
+
+
+Progress: |[32m=[0mWarning: Failed to cleanup remote test dir: closed stream
+[32m=[0m[32m=[0m[32m=[0m[32m=[0m[32m=[0m[32m=[0m[32m=[0m

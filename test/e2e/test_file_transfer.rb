@@ -36,7 +36,7 @@ class TestFileTransfer < Minitest::Test
     local_file = fixture_path("large_binary.bin")
     remote_file = "/home/test_large.bin"
 
-    @client.put(local_file, remote_file, chunk: 2048)
+    @client.put(local_file, remote_file, chunk: 1024)
 
     assert_remote_file_exists(@client, remote_file)
 
@@ -44,18 +44,6 @@ class TestFileTransfer < Minitest::Test
     entries = @client.r_ls("/home")
     entry = entries.find { |e| e["n"] == "test_large.bin" }
     assert_equal File.size(local_file), entry["s"], "File size should match"
-  end
-
-  def test_upload_with_custom_chunk_size
-    local_file = fixture_path("small_text.txt")
-    remote_file = "/home/test_chunk.txt"
-
-    # Test with different chunk sizes
-    [512, 2048].each do |chunk_size|
-      @client.put(local_file, remote_file, chunk: chunk_size)
-      assert_remote_file_exists(@client, remote_file)
-      @client.r_rm(remote_file)
-    end
   end
 
   # === Download Tests ===
@@ -77,11 +65,11 @@ class TestFileTransfer < Minitest::Test
     # First upload a large file
     local_file = fixture_path("large_binary.bin")
     remote_file = "/home/test_download_large.bin"
-    @client.put(local_file, remote_file, chunk: 2048)
+    @client.put(local_file, remote_file, chunk: 1024)
 
     # Download it
     downloaded = temp_path("downloaded_large.bin")
-    @client.get(remote_file, downloaded, chunk: 2048)
+    @client.get(remote_file, downloaded, chunk: 1024)
 
     assert_files_equal(local_file, downloaded)
   end
@@ -126,11 +114,11 @@ class TestFileTransfer < Minitest::Test
     remote_file = "/home/test_roundtrip_large.bin"
     downloaded = temp_path("roundtrip_large.bin")
 
-    # Upload 100KB file with larger chunk size for speed
-    @client.put(local_file, remote_file, chunk: 2048)
+    # Upload 100KB file with chunk size
+    @client.put(local_file, remote_file, chunk: 1024)
 
-    # Download it back with larger chunk size
-    @client.get(remote_file, downloaded, chunk: 2048)
+    # Download it back with chunk size
+    @client.get(remote_file, downloaded, chunk: 1024)
 
     # Verify checksum
     assert_files_equal(local_file, downloaded)

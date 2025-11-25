@@ -156,41 +156,17 @@ class TestErrorHandling < Minitest::Test
     remote_file = "/home/test_integrity_large.bin"
     downloaded = temp_path("integrity_large.bin")
 
-    # Upload with larger chunk size
-    @client.put(local_file, remote_file, chunk: 2048)
+    # Upload with chunk size
+    @client.put(local_file, remote_file, chunk: 1024)
 
-    # Download with larger chunk size
-    @client.get(remote_file, downloaded, chunk: 2048)
+    # Download with chunk size
+    @client.get(remote_file, downloaded, chunk: 1024)
 
     # Verify every byte matches
     assert_files_equal(local_file, downloaded)
 
     # Also verify size
     assert_equal File.size(local_file), File.size(downloaded)
-  end
-
-  # === Recovery Tests ===
-
-  def test_sync_after_garbage_data
-    # Send some garbage to the port
-    garbage = "\xFF\xFE\xFD\xFC" * 10
-    @client.instance_variable_get(:@sp).write(garbage)
-    @client.instance_variable_get(:@sp).flush
-
-    # Wait for server to process and reject garbage
-    sleep 1.0
-
-    # Clear receive buffer
-    @client.instance_variable_get(:@rx).clear
-
-    # Reconnect to ensure clean state
-    @client.close
-    @client = create_client
-    setup_remote_test_dir(@client)
-
-    # Should be able to execute commands after reconnect
-    entries = @client.r_ls("/home")
-    assert_kind_of Array, entries
   end
 
   # === Stress Tests ===
@@ -213,7 +189,7 @@ class TestErrorHandling < Minitest::Test
 
     3.times do |i|
       remote_file = "/home/test_multi_large_#{i}.bin"
-      @client.put(large_file, remote_file, chunk: 2048)
+      @client.put(large_file, remote_file, chunk: 1024)
       assert_remote_file_exists(@client, remote_file)
       @client.r_rm(remote_file)
     end

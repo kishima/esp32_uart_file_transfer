@@ -1,37 +1,37 @@
 # UART File Transfer for ESP32
 
-ESP32デバイス（M5StickC Plus2）とPC間でUART経由でファイル転送を行うコンポーネントです。
+A component for transferring files between ESP32 devices (M5StickC Plus2) and PC via UART.
 
-## 概要
+## Overview
 
-- **プロトコル**: COBS (Consistent Overhead Byte Stuffing) エンコーディング + CRC32チェックサム
-- **ファイルシステム**: FatFs (Flash上のDrive 1: パーティション 0x210000)
-- **通信速度**: 115200 baud
-- **チャンクサイズ**: 1KB
+- **Protocol**: COBS (Consistent Overhead Byte Stuffing) encoding + CRC32 checksum
+- **File System**: FatFs (Flash Drive 1: Partition 0x210000)
+- **Baud Rate**: 115200 baud
+- **Chunk Size**: 1024 bytes (fixed, ESP32 firmware limit)
 - **UART**: UART0 (GPIO1=TX, GPIO3=RX)
 
-## 機能
+## Features
 
-- ディレクトリ操作 (cd, ls)
-- ファイル操作 (get, put, rm)
-- デバイス制御 (reboot)
-- 同期コマンド (sync)
+- Directory operations (cd, ls)
+- File operations (get, put, rm)
+- Device control (reboot)
+- Synchronization (sync)
 
-## ESP32側の設定
+## ESP32 Configuration
 
-### プロジェクトへの組み込み
+### Integration into Project
 
-1. このコンポーネントを `components/uart-file-transfer/` に配置
+1. Place this component in `components/esp32_uart_file_transfer/`
 
-2. main/CMakeLists.txt に依存関係を追加:
+2. Add dependency to `main/CMakeLists.txt`:
 ```cmake
 idf_component_register(
   SRCS "main.c"
-  REQUIRES uart-file-transfer
+  REQUIRES esp32_uart_file_transfer
 )
 ```
 
-3. main.c でfs_proxyタスクを起動:
+3. Start fs_proxy task in `main.c`:
 ```c
 #include "uart_file_transfer.h"
 
@@ -40,9 +40,9 @@ void app_main(void) {
 }
 ```
 
-### GPIO37ボタンによる起動モード切り替え（オプション）
+### Optional: GPIO37 Button Boot Mode Switch
 
-M5StickC Plus2のButtonAを押しながら起動すると、UARTファイル転送モードになります：
+Press M5StickC Plus2's ButtonA during boot to enter UART file transfer mode:
 
 ```c
 #include "uart_file_transfer.h"
@@ -54,60 +54,60 @@ void app_main(void) {
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << BUTTON_GPIO),
         .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,  // GPIO37は入力専用、外部プルアップが必要
+        .pull_up_en = GPIO_PULLUP_DISABLE,  // GPIO37 is input-only, requires external pullup
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
     };
     gpio_config(&io_conf);
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    if (gpio_get_level(BUTTON_GPIO) == 0) {  // ボタン押下時（Active Low）
+    if (gpio_get_level(BUTTON_GPIO) == 0) {  // Button pressed (Active Low)
         fs_proxy_create_task();
-        while(1) vTaskDelay(pdMS_TO_TICKS(100));  // UARTモードで待機
+        while(1) vTaskDelay(pdMS_TO_TICKS(100));  // Wait in UART mode
     }
 
-    // 通常起動処理
+    // Normal boot process
 }
 ```
 
-### ログレベル設定
+### Log Level Configuration
 
-fs_proxy.c の `FS_PROXY_LOG_LEVEL` で制御:
+Control logging in `fs_proxy.c` via `FS_PROXY_LOG_LEVEL`:
 ```c
 #define FS_PROXY_LOG_LEVEL ESP_LOG_INFO  // NONE, ERROR, WARN, INFO, DEBUG, VERBOSE
 ```
 
-## PC側クライアント
+## PC Client
 
-### 必要なもの
+### Requirements
 
-- Ruby 3.0以上
-- シリアルポートアクセス権限
+- Ruby 3.0 or later
+- Serial port access permissions
 
-### インストール
+### Installation
 
-特別なインストールは不要。Rubyが実行できればそのまま使えます。
+No special installation required. Just run with Ruby.
 
-### 使い方
+### Usage
 
-#### インタラクティブシェル
+#### Interactive Shell
 
 ```bash
-ruby components/uart-file-transfer/client/transfer_client.rb --port /dev/ttyACM0 shell
+ruby components/esp32_uart_file_transfer/client/transfer_client.rb --port /dev/ttyACM0 shell
 ```
 
-シェルコマンド:
+Shell commands:
 ```
-ls [path]          # ディレクトリ一覧表示
-cd <path>          # ディレクトリ移動
-pwd                # カレントディレクトリ表示
-get <remote> [local]   # ファイルダウンロード
-put <local> <remote>   # ファイルアップロード
-rm <path>          # ファイル/ディレクトリ削除
-reboot             # ESP32再起動
-exit               # シェル終了
+ls [path]              # List directory
+cd <path>              # Change directory
+pwd                    # Print working directory
+get <remote> [local]   # Download file
+put <local> <remote>   # Upload file
+rm <path>              # Remove file/directory
+reboot                 # Reboot ESP32
+exit                   # Exit shell
 ```
 
-例:
+Example:
 ```bash
 > ls /
 > cd /data
@@ -116,139 +116,59 @@ exit               # シェル終了
 > reboot
 ```
 
-#### コマンドライン（ワンショット）
+#### Command Line (One-shot)
 
 ```bash
-# ファイルアップロード
-ruby components/uart-file-transfer/client/transfer_client.rb --port /dev/ttyACM0 put local.txt /remote.txt
+# Upload file
+ruby components/esp32_uart_file_transfer/client/transfer_client.rb --port /dev/ttyACM0 transfer up local.txt /remote.txt
 
-# ファイルダウンロード
-ruby components/uart-file-transfer/client/transfer_client.rb --port /dev/ttyACM0 get /remote.txt local.txt
+# Download file
+ruby components/esp32_uart_file_transfer/client/transfer_client.rb --port /dev/ttyACM0 transfer down /remote.txt local.txt
 
-# ディレクトリ一覧
-ruby components/uart-file-transfer/client/transfer_client.rb --port /dev/ttyACM0 ls /
+# List directory
+ruby components/esp32_uart_file_transfer/client/transfer_client.rb --port /dev/ttyACM0 remote ls /
 
-# 再起動
-ruby components/uart-file-transfer/client/transfer_client.rb --port /dev/ttyACM0 reboot
+# Reboot
+ruby components/esp32_uart_file_transfer/client/transfer_client.rb --port /dev/ttyACM0 remote reboot
 ```
 
-### デバッグモード
+### Debug Mode
 
-transfer_client.rb の `DEBUG_MODE` を `true` に設定すると詳細ログが出力されます:
+Set `DEBUG_MODE` to `true` in `transfer_client.rb` for detailed logging:
 ```ruby
-DEBUG_MODE = true  # デバッグログ有効
+DEBUG_MODE = true  # Enable debug logs
 ```
 
-## プロトコル仕様
+## Testing
 
-### フレーム構造
+See [test/README.md](test/README.md) for detailed test documentation.
 
-```
-[COBS encoded data] + 0x00 delimiter
-```
+## Troubleshooting
 
-COBS decoded data:
-```
-[cmd:1][len_hi:1][len_lo:1][JSON params][binary data][CRC32:4]
-```
+### Connection Issues
 
-- `cmd`: コマンドコード (0x01, 0x11, 0x12, 0x13, 0x21, 0x22, 0x31)
-- `len`: JSON部分の長さ（big-endian, 16bit）
-- `JSON params`: コマンドパラメータ（JSON形式）
-- `binary data`: バイナリデータ（PUTコマンド時のみ）
-- `CRC32`: チェックサム（big-endian, 全データ対象）
-
-### コマンドコード
-
-| コード | コマンド | 説明 |
-|--------|----------|------|
-| 0x01   | SYNC     | 同期・接続確認 |
-| 0x11   | CD       | ディレクトリ移動 |
-| 0x12   | LS       | ディレクトリ一覧 |
-| 0x13   | RM       | ファイル削除 |
-| 0x21   | GET      | ファイル読み込み |
-| 0x22   | PUT      | ファイル書き込み |
-| 0x31   | REBOOT   | 再起動 |
-| 0x00   | RESP     | レスポンス |
-
-### レスポンスフォーマット
-
-成功:
-```json
-{"ok": true}
-```
-
-エラー:
-```json
-{"ok": false, "err": "error message"}
-```
-
-LS応答:
-```json
-{"ok": true, "entries": [{"n": "name", "t": "f", "s": 1234}, ...]}
-```
-- `n`: ファイル/ディレクトリ名
-- `t`: タイプ (`"f"` = ファイル, `"d"` = ディレクトリ)
-- `s`: サイズ（バイト）
-
-GET応答:
-```json
-{"ok": true, "eof": false, "bin": 1024}
-```
-+ バイナリデータ（1024バイト）
-
-## トラブルシューティング
-
-### 接続できない
-
-1. シリアルポートのパーミッション確認:
+1. Check serial port permissions:
 ```bash
 sudo chmod 666 /dev/ttyACM0
-# または
-sudo usermod -a -G dialout $USER  # 再ログイン必要
+# or
+sudo usermod -a -G dialout $USER  # Requires re-login
 ```
 
-2. ポート名の確認:
+2. Verify port name:
 ```bash
 ls /dev/tty*
 ```
 
-3. ESP32が起動メッセージ `UFTE_READY` を出力しているか確認
+### Transfer Failures
 
-### 転送が失敗する
+- **CRC Error**: Check cable quality, try lower baud rate
 
-- CRCエラー: ケーブル品質を確認、ボーレートを下げる
-- タイムアウト: チャンクサイズを小さくする（現在1KB）
-- メモリ不足: ESP32側のログレベルを下げる
+## TODO
 
-### ファイルが見つからない
+Implement retry mechanism: None (currently, if it fails immediately on communication error)
 
-- FatFsパスは `1:/` で始まります（Drive 1）
-- 絶対パス指定を推奨: `/data/file.txt`
-- ディレクトリが存在するか `ls` で確認
 
-## 技術仕様
-
-### メモリ使用量
-
-- タスクスタックサイズ: 8KB
-- UARTバッファ: 2KB (RX) + 2KB (TX)
-- フレームバッファ: 2KB (最大)
-- 動的確保: 各コマンド実行時に必要量を確保し、完了後に解放
-
-### 制限事項
-
-- 最大ファイルサイズ: FatFsの制限に準拠（4GB）
-- 最大パス長: 256バイト
-- 最大JSONパラメータ長: 512バイト
-- 同時接続数: 1（UART0のみ使用）
-- リトライ機能: なし（通信エラー時は即失敗）
-
-## ライセンス
-
-このコンポーネントは R2P2-ESP32 プロジェクトの一部です。
-
-## 参考
+## References
 
 - [COBS (Consistent Overhead Byte Stuffing)](https://en.wikipedia.org/wiki/Consistent_Overhead_Byte_Stuffing)
 - [FatFs - Generic FAT Filesystem Module](http://elm-chan.org/fsw/ff/)

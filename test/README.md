@@ -1,168 +1,236 @@
-# UART File Transfer E2E Tests
+# UART File Transfer Test Suite
 
-このディレクトリには、ESP32 UARTファイル転送プロトコルの実機E2Eテストが含まれています。
+This directory contains the test suite for ESP32 UART file transfer protocol, including both unit tests and end-to-end (E2E) tests.
 
-## セットアップ
+## Setup
 
-### 1. 依存関係のインストール
+### 1. Install Dependencies
 
 ```bash
 cd components/esp32_uart_file_transfer
 bundle install
 ```
 
-### 2. ESP32デバイスの準備
+### 2. Prepare ESP32 Device
 
-- ESP32デバイスにファームウェアをフラッシュ
-- デバイスをUSB経由で接続
-- シリアルポートのパスを確認（例: `/dev/ttyUSB0`, `/dev/ttyACM0`）
+- Flash firmware to ESP32 device
+- Connect device via USB
+- Identify serial port path (e.g., `/dev/ttyUSB0`, `/dev/ttyACM0`)
 
-### 3. シリアルポートの権限設定（Linux）
+### 3. Serial Port Permissions (Linux)
 
 ```bash
 sudo usermod -a -G dialout $USER
-# ログアウト/ログインが必要
+# Logout/login required
 ```
 
-または一時的に：
+Or temporarily:
 
 ```bash
 sudo chmod 666 /dev/ttyUSB0
 ```
 
-## テストの実行
+## Running Tests
 
-### 全テスト実行
+### Run All Tests (Unit + E2E)
 
 ```bash
 TEST_SERIAL_PORT=/dev/ttyUSB0 rake test
 ```
 
-### 個別テスト実行
+### Run Unit Tests Only (No Hardware Required)
 
 ```bash
-# ファイル転送テストのみ
-TEST_SERIAL_PORT=/dev/ttyUSB0 rake test:file_transfer
-
-# リモートコマンドテストのみ
-TEST_SERIAL_PORT=/dev/ttyUSB0 rake test:remote_commands
-
-# エラーハンドリングテストのみ
-TEST_SERIAL_PORT=/dev/ttyUSB0 rake test:error_handling
+rake test:unit
 ```
 
-### テスト情報の表示
+### Run E2E Tests Only
+
+```bash
+TEST_SERIAL_PORT=/dev/ttyUSB0 rake test:e2e
+```
+
+### Run Individual Test Suites
+
+```bash
+# File transfer tests only
+TEST_SERIAL_PORT=/dev/ttyUSB0 rake test:file_transfer
+
+# Remote command tests only
+TEST_SERIAL_PORT=/dev/ttyUSB0 rake test:remote_commands
+
+# Error handling tests only
+TEST_SERIAL_PORT=/dev/ttyUSB0 rake test:error_handling
+
+# Protocol error unit tests
+rake test:protocol_errors
+
+# Timeout unit tests
+rake test:timeout
+```
+
+### Display Test Information
 
 ```bash
 rake info
 ```
 
-## テストカバレッジ
+## Test Coverage
 
-### test/e2e/test_file_transfer.rb
+### Unit Tests (test/unit/)
 
-ファイル転送機能のテスト：
+Mock-based tests that run without hardware:
 
-- **アップロード**: 小サイズ/500KBファイル、カスタムチャンクサイズ
-- **ダウンロード**: 小/大ファイル、存在しないファイル
-- **ラウンドトリップ**: アップロード→ダウンロード検証
-- **上書き**: 既存ファイルの上書き
-- **transfer()ラッパー**: up/down方向の転送
+#### test/unit/test_protocol_errors.rb
 
-### test/e2e/test_remote_commands.rb
+Protocol error handling tests:
 
-リモートコマンドのテスト：
+- **CRC Errors**: CRC mismatch detection
+- **COBS Errors**: Invalid COBS data, decode errors
+- **Invalid JSON**: Malformed JSON in responses
+- **Short Frames**: Frames that are too short
+- **COBS Edge Cases**: Empty data, all zeros, no zeros, max run length
 
-- **cd**: ディレクトリ移動（/flash, /, 無効なパス）
-- **ls**: ディレクトリ一覧（/, /flash, カレント, 無効なパス）
-- **rm**: ファイル削除（単一/複数、存在しないファイル）
-- **ホストコマンド**: h_cd, h_ls
-- **ワークフロー**: cd→ls→upload→ls→rm の統合テスト
+#### test/unit/test_timeout.rb
 
-### test/e2e/test_error_handling.rb
+Timeout behavior tests:
 
-エラーハンドリングのテスト：
+- **Fast Operations**: Operations that complete within timeout
+- **Slow Operations**: Operations that exceed timeout
+- **Timeout Configuration**: Custom timeout values
 
-- **タイムアウト**: 同期タイムアウト、レスポンスタイムアウト
-- **CRCエラー**: COBS デコードエラー検出
-- **プロトコルエラー**: 不正なフレーム、短いフレーム
-- **ファイル操作エラー**: 無効なパス、存在しないファイル
-- **ローカルファイルエラー**: 存在しないファイル、無効なパス
-- **接続エラー**: クローズ後の操作、再接続
-- **データ整合性**: 特殊バイト、大ファイルの整合性
-- **リカバリ**: ガベージデータ後の復帰
-- **ストレステスト**: 連続操作、複数大ファイル転送
+### E2E Tests (test/e2e/)
 
-## テストフィクスチャ
+Hardware-based tests that require ESP32 device:
+
+#### test/e2e/test_file_transfer.rb
+
+File transfer functionality tests:
+
+- **Upload**: Small/100KB files with 1024-byte chunks
+- **Download**: Small/large files, nonexistent file handling
+- **Round-trip**: Upload→Download verification with checksum
+- **Overwrite**: Overwriting existing files
+- **transfer() Wrapper**: up/down direction transfers
+
+#### test/e2e/test_remote_commands.rb
+
+Remote command tests:
+
+- **cd**: Directory navigation (/home, /, invalid paths)
+- **ls**: Directory listing (/, /home, current dir, invalid paths)
+- **rm**: File deletion (single/multiple, nonexistent files)
+- **Host Commands**: h_cd, h_ls
+- **Workflows**: Integrated cd→ls→upload→ls→rm sequences
+
+#### test/e2e/test_error_handling.rb
+
+Error handling and recovery tests:
+
+- **COBS Protocol**: COBS decode error handling
+- **File Operations**: Invalid paths, nonexistent files
+- **Local File Errors**: Nonexistent local files, invalid paths
+- **Connection Errors**: Operations after close, reconnection
+- **Data Integrity**: Special bytes (0x00, 0xFF, etc.), large file integrity
+- **Stress Tests**: Rapid sequential operations, multiple large file transfers
+
+## Test Fixtures
 
 ### test/fixtures/test_files/
 
-- `small_text.txt`: 小サイズのテキストファイル（数百バイト）
-- `large_binary.bin`: 500KBのバイナリファイル
+- `small_text.txt`: Small text file (few hundred bytes)
+- `large_binary.bin`: 100KB binary file
 
-テスト実行時、一時ファイルは `test/tmp/` に作成され、テスト終了後に自動削除されます。
+Temporary files are created in `test/tmp/` during test execution and automatically cleaned up after tests complete.
 
-## トラブルシューティング
+## Troubleshooting
 
-### "TEST_SERIAL_PORT not set" エラー
+### "TEST_SERIAL_PORT not set" Error
 
-環境変数 `TEST_SERIAL_PORT` を設定してください：
+Set the `TEST_SERIAL_PORT` environment variable:
 
 ```bash
 export TEST_SERIAL_PORT=/dev/ttyUSB0
 rake test
 ```
 
-### シリアルポートアクセスエラー
+### Serial Port Access Error
 
-- ポートが正しいか確認: `ls -l /dev/ttyUSB*`
-- 権限を確認: `groups` でdialoutグループに所属しているか確認
-- デバイスが接続されているか確認: `dmesg | tail`
+- Verify port exists: `ls -l /dev/ttyUSB*`
+- Check permissions: `groups` (verify dialout group membership)
+- Check device connection: `dmesg | tail`
 
-### 同期エラー（"Failed to detect server beacon"）
+### Sync Error ("Failed to detect server beacon")
 
-- ESP32が正しく起動しているか確認
-- ファームウェアが正しくフラッシュされているか確認
-- シリアルモニタなどで他のプログラムがポートを使用していないか確認
-- ボーレートが一致しているか確認（デフォルト: 115200）
+- Verify ESP32 is powered on and running
+- Verify firmware is correctly flashed
+- Close any serial monitors or other programs using the port
+- Verify baud rate matches (default: 115200)
 
-### テストがハング
+### Tests Hang
 
-- タイムアウト設定を調整: `create_client(timeout: 20.0)`
-- デバッグモードを有効化: `transfer_client.rb` の `DEBUG_MODE = true`
-- ESP32をリセットしてからテスト再実行
+- Adjust timeout: `create_client(timeout: 20.0)`
+- Enable debug mode: Set `DEBUG_MODE = true` in `transfer_client.rb`
+- Reset ESP32 and re-run tests
+- Tests have automatic 30-second timeout per test
 
-## 開発者向け
+### CRC Mismatch Errors
 
-### 新しいテストの追加
+- Verify chunk size is set to 1024 bytes (ESP32 firmware limit)
+- Check serial cable quality
+- Try lower baud rate if issues persist
 
-1. 適切なテストファイルに追加（または新規作成）
-2. `TestHelper` モジュールのヘルパーメソッドを活用
-3. `setup` でクライアント作成・同期
-4. `teardown` でクリーンアップ
-5. アサーションは明確に記述
+## Test Architecture
 
-### テストヘルパーメソッド
+### Test Helper (`test/test_helper.rb`)
 
-`TestHelper` モジュール（`test/test_helper.rb`）には以下が含まれます：
+The `TestHelper` module provides:
 
-- `create_client(timeout:)`: テスト用クライアント作成
-- `wait_and_sync(client)`: デバイスと同期
-- `file_checksum(path)`: SHA256チェックサム計算
-- `fixture_path(filename)`: フィクスチャファイルのパス取得
-- `temp_path(filename)`: 一時ファイルのパス取得
-- `assert_files_equal(path1, path2)`: ファイル内容の比較
-- `assert_remote_file_exists(client, path)`: リモートファイル存在確認
-- `setup_remote_test_dir(client)`: リモートテスト環境セットアップ
-- `cleanup_remote_test_dir(client)`: リモートテストファイルクリーンアップ
+- `create_client(timeout:)`: Create test client instance
+- `wait_and_sync(client)`: Synchronize with device
+- `file_checksum(path)`: Calculate SHA256 checksum
+- `fixture_path(filename)`: Get fixture file path
+- `temp_path(filename)`: Get temporary file path
+- `assert_files_equal(path1, path2)`: Compare file contents
+- `assert_remote_file_exists(client, path)`: Verify remote file exists
+- `refute_remote_file_exists(client, path)`: Verify remote file doesn't exist
+- `setup_remote_test_dir(client)`: Setup remote test environment
+- `cleanup_remote_test_dir(client)`: Cleanup remote test files
 
-### コーディング規約
+### Unit Test Helper (`test/unit_helper.rb`)
 
-- Minitest標準のアサーションを使用
-- テストメソッド名: `test_<動作>_<条件>`
-- 各テストは独立して実行可能にする
-- セットアップ/ティアダウンで状態をクリーンに保つ
+The `UnitTestHelper` module provides:
 
-## ライセンス
+- `MockSerialPort`: Mock serial port for testing without hardware
+- `build_frame(code, obj)`: Build protocol frames for testing
+- `build_bad_crc_frame(code, obj)`: Build frames with intentional CRC errors
+- `build_invalid_json_frame(code)`: Build frames with invalid JSON
+- `build_short_frame()`: Build frames that are too short
 
-このテストスイートは親プロジェクトと同じライセンスです。
+### Coding Conventions
+
+- Use Minitest standard assertions
+- Test method naming: `test_<action>_<condition>`
+- Each test should be independently executable
+- Keep state clean with setup/teardown
+- Use descriptive assertions with custom messages
+
+### Adding New Tests
+
+1. Add to appropriate test file (or create new one)
+2. Use `TestHelper` or `UnitTestHelper` methods
+3. For E2E tests: Create client in `setup`, cleanup in `teardown`
+4. For unit tests: Use mocks, no hardware required
+5. Write clear, descriptive assertions
+
+## Test Statistics
+
+- **Total Tests**: 53 (12 unit + 41 E2E)
+- **Unit Tests**: Run in <1 second
+- **E2E Tests**: Run in ~5 minutes (depending on hardware)
+- **Test Timeout**: 30 seconds per test
+- **Chunk Size**: Fixed at 1024 bytes (ESP32 firmware limit)
+
+## License
+
+This test suite follows the same license as the parent project.

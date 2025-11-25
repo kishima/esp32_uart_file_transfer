@@ -2,6 +2,7 @@ require 'minitest/autorun'
 require 'minitest/reporters'
 require 'fileutils'
 require 'digest'
+require 'timeout'
 
 # Use progress reporter for cleaner output
 Minitest::Reporters.use! Minitest::Reporters::ProgressReporter.new
@@ -13,6 +14,9 @@ module TestHelper
   # Test configuration
   FIXTURES_DIR = File.expand_path("fixtures/test_files", __dir__)
   TEMP_DIR = File.expand_path("tmp", __dir__)
+
+  # Test timeout (30 seconds per test)
+  TEST_TIMEOUT = 30
 
   # Get serial port from environment or skip tests
   def serial_port
@@ -67,30 +71,59 @@ module TestHelper
   end
 
   # Remote test directory (cleanup after tests)
-  REMOTE_TEST_DIR = "/flash/test"
+  REMOTE_TEST_DIR = "/home"
 
   # Setup remote test environment
   def setup_remote_test_dir(client)
     begin
-      # Try to create test directory (may fail if exists)
-      client.r_cd("/flash")
+      # Change to /home directory
+      client.r_cd("/home")
+
+      # Clean up any leftover test files from previous runs
+      begin
+        entries = client.r_ls("/home")
+        entries.each do |entry|
+          if entry["n"].start_with?("test_")
+            begin
+              Timeout.timeout(5) do
+                client.r_rm("/home/#{entry["n"]}")
+              end
+            rescue => e
+              # Ignore individual file cleanup errors
+              warn "Warning: Failed to cleanup #{entry["n"]}: #{e.message}"
+            end
+          end
+        end
+      rescue => e
+        # Ignore cleanup errors, continue with test
+        warn "Warning: Failed to list/cleanup test files: #{e.message}"
+      end
     rescue => e
-      # Ignore errors, just ensure we're in /flash
+      # If can't cd to /home, that's a real problem
+      raise "Failed to setup remote test dir: #{e.message}"
     end
   end
 
   # Cleanup remote test files
   def cleanup_remote_test_dir(client)
     begin
-      # Remove test files one by one
-      entries = client.r_ls("/flash")
+      entries = client.r_ls("/home")
       entries.each do |entry|
         if entry["n"].start_with?("test_")
-          client.r_rm("/flash/#{entry["n"]}")
+          begin
+            # Add timeout for each file removal
+            Timeout.timeout(10) do
+              client.r_rm("/home/#{entry["n"]}")
+            end
+          rescue Timeout::Error
+            warn "Warning: Timeout removing #{entry["n"]}"
+          rescue => e
+            warn "Warning: Failed to remove #{entry["n"]}: #{e.message}"
+          end
         end
       end
     rescue => e
-      # Ignore cleanup errors
+      # Ignore cleanup errors at teardown
       warn "Warning: Failed to cleanup remote test dir: #{e.message}"
     end
   end
@@ -117,5 +150,36 @@ module TestHelper
     entries = client.r_ls(dir)
     refute entries.any? { |e| e["n"] == filename },
            msg || "Remote file #{remote_path} should not exist"
+  end
+
+  # Wrap test execution with timeout
+  def run_with_timeout(&block)
+    Timeout.timeout(TEST_TIMEOUT) do
+      block.call
+    end
+  rescue Timeout::Error
+    flunk "Test exceeded #{TEST_TIMEOUT} second timeout"
+  end
+end
+
+# Add timeout to all test methods automatically
+module Minitest
+  class Runnable
+    alias_method :original_run, :run
+
+    def run
+      if self.class.name =~ /Test/
+        Timeout.timeout(TestHelper::TEST_TIMEOUT) do
+          original_run
+        end
+      else
+        original_run
+      end
+    rescue Timeout::Error
+      self.failures << Minitest::UnexpectedError.new(
+        RuntimeError.new("Test exceeded #{TestHelper::TEST_TIMEOUT} second timeout")
+      )
+      self
+    end
   end
 end

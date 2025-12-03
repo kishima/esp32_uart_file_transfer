@@ -29,7 +29,7 @@ static const char *TAG = "fs_proxy";
 
 // Log level control - Change this to enable/disable logs
 // ESP_LOG_NONE, ESP_LOG_ERROR, ESP_LOG_WARN, ESP_LOG_INFO, ESP_LOG_DEBUG, ESP_LOG_VERBOSE
-#define FS_PROXY_LOG_LEVEL ESP_LOG_INFO
+#define FS_PROXY_LOG_LEVEL ESP_LOG_NONE
 
 // UART Configuration
 #define FS_PROXY_UART_NUM UART_NUM_0

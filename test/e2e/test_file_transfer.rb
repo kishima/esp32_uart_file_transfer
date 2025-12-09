@@ -6,7 +6,6 @@ class TestFileTransfer < Minitest::Test
   def setup
     super
     @client = create_client
-    # wait_and_sync(@client)  # Disabled: beacon not enabled in firmware
     setup_remote_test_dir(@client)
   end
 

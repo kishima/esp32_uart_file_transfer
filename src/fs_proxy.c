@@ -29,7 +29,7 @@ static const char *TAG = "fs_proxy";
 
 // Log level control - Change this to enable/disable logs
 // ESP_LOG_NONE, ESP_LOG_ERROR, ESP_LOG_WARN, ESP_LOG_INFO, ESP_LOG_DEBUG, ESP_LOG_VERBOSE
-#define FS_PROXY_LOG_LEVEL ESP_LOG_NONE
+#define FS_PROXY_LOG_LEVEL ESP_LOG_DEBUG
 
 // UART Configuration
 #define FS_PROXY_UART_NUM UART_NUM_0
@@ -44,9 +44,9 @@ static const char *TAG = "fs_proxy";
 
 // Protocol definitions
 #define FS_PROXY_DELIM 0x00
-#define FS_PROXY_MAX_FRAME_SIZE 2048  // 1KB data + overhead
 #define FS_PROXY_MAX_PATH_LEN 256
-#define FS_PROXY_MAX_JSON_LEN 1024  // 1KB chunk size
+#define FS_PROXY_MAX_CHUNK_SIZE 1024  // 1KB chunk size
+#define FS_PROXY_MAX_FRAME_SIZE (FS_PROXY_MAX_CHUNK_SIZE * 2)  // chunk size + overhead
 #define FS_PROXY_MAX_JSON_PARAMS_LEN 512  // JSON params are typically small
 
 // Command codes (from fmrb_test_server.rb)
@@ -548,13 +548,25 @@ static void cmd_put(fs_proxy_context_t *ctx, const char *json_params,
     // Write chunk
     UINT bytes_written;
     res = f_write(&file, binary_data, binary_size, &bytes_written);
-    f_close(&file);
 
     if (res != FR_OK || bytes_written != binary_size) {
+        ESP_LOGE(TAG, "f_write failed: res=%d, bytes_written=%u, expected=%zu",
+                 res, bytes_written, binary_size);
+        f_close(&file);
         snprintf(response, response_size, "%s", RESP_ERROR("Write failed"));
         goto cleanup;
     }
 
+    // Sync to ensure data is written to disk
+    res = f_sync(&file);
+    if (res != FR_OK) {
+        ESP_LOGE(TAG, "f_sync failed: res=%d", res);
+        f_close(&file);
+        snprintf(response, response_size, "%s", RESP_ERROR("Write sync failed"));
+        goto cleanup;
+    }
+
+    f_close(&file);
     snprintf(response, response_size, "%s", RESP_OK);
 
 cleanup:
@@ -637,8 +649,8 @@ static void process_frame(fs_proxy_context_t *ctx, const uint8_t *frame, size_t 
 {
     // Allocate buffers dynamically to save memory when not processing frames
     uint8_t *decoded = fs_proxy_malloc(FS_PROXY_MAX_FRAME_SIZE);
-    char *json_response = fs_proxy_malloc(FS_PROXY_MAX_JSON_LEN);
-    uint8_t *binary_response_buffer = fs_proxy_malloc(FS_PROXY_MAX_JSON_LEN);
+    char *json_response = fs_proxy_malloc(FS_PROXY_MAX_CHUNK_SIZE);
+    uint8_t *binary_response_buffer = fs_proxy_malloc(FS_PROXY_MAX_CHUNK_SIZE);
     char *json_params = fs_proxy_malloc(FS_PROXY_MAX_JSON_PARAMS_LEN);
 
     if (!decoded || !json_response || !binary_response_buffer || !json_params) {
@@ -705,43 +717,43 @@ static void process_frame(fs_proxy_context_t *ctx, const uint8_t *frame, size_t 
         case CMD_SYNC:
             ESP_LOGI(TAG, "Processing SYNC command");
             // Synchronization command - send magic bytes
-            snprintf(json_response, FS_PROXY_MAX_JSON_LEN,
-                    "{\"status\":\"ok\",\"magic\":\"%s\",\"version\":\"1.0\"}", SYNC_MAGIC);
+            snprintf(json_response, FS_PROXY_MAX_CHUNK_SIZE,
+                    "{\"ok\":true,\"magic\":\"%s\",\"version\":\"1.0\"}", SYNC_MAGIC);
             send_response(ctx->uart_num, json_response, NULL, 0);
             break;
 
         case CMD_CD:
             ESP_LOGI(TAG, "Processing CD command");
-            cmd_cd(ctx, json_params, json_response, FS_PROXY_MAX_JSON_LEN);
+            cmd_cd(ctx, json_params, json_response, FS_PROXY_MAX_CHUNK_SIZE);
             send_response(ctx->uart_num, json_response, NULL, 0);
             break;
 
         case CMD_LS:
             ESP_LOGI(TAG, "Processing LS command");
-            cmd_ls(ctx, json_params, json_response, FS_PROXY_MAX_JSON_LEN);
+            cmd_ls(ctx, json_params, json_response, FS_PROXY_MAX_CHUNK_SIZE);
             send_response(ctx->uart_num, json_response, NULL, 0);
             break;
 
         case CMD_RM:
-            cmd_rm(ctx, json_params, json_response, FS_PROXY_MAX_JSON_LEN);
+            cmd_rm(ctx, json_params, json_response, FS_PROXY_MAX_CHUNK_SIZE);
             send_response(ctx->uart_num, json_response, NULL, 0);
             break;
 
         case CMD_GET:
-            cmd_get(ctx, json_params, json_response, FS_PROXY_MAX_JSON_LEN,
-                   binary_response_buffer, &response_binary_size, FS_PROXY_MAX_JSON_LEN);
+            cmd_get(ctx, json_params, json_response, FS_PROXY_MAX_CHUNK_SIZE,
+                   binary_response_buffer, &response_binary_size, FS_PROXY_MAX_CHUNK_SIZE);
             send_response(ctx->uart_num, json_response, binary_response_buffer, response_binary_size);
             break;
 
         case CMD_PUT:
             cmd_put(ctx, json_params, binary_data, binary_size,
-                   json_response, FS_PROXY_MAX_JSON_LEN);
+                   json_response, FS_PROXY_MAX_CHUNK_SIZE);
             send_response(ctx->uart_num, json_response, NULL, 0);
             break;
 
         case CMD_REBOOT:
             ESP_LOGI(TAG, "Processing REBOOT command");
-            cmd_reboot(json_response, FS_PROXY_MAX_JSON_LEN);
+            cmd_reboot(json_response, FS_PROXY_MAX_CHUNK_SIZE);
             send_response(ctx->uart_num, json_response, NULL, 0);
             // Wait for response to be sent, then reboot
             vTaskDelay(pdMS_TO_TICKS(100));
@@ -749,7 +761,7 @@ static void process_frame(fs_proxy_context_t *ctx, const uint8_t *frame, size_t 
             break;
 
         default:
-            snprintf(json_response, FS_PROXY_MAX_JSON_LEN, "{\"error\":\"Unknown command\"}");
+            snprintf(json_response, FS_PROXY_MAX_CHUNK_SIZE, "{\"error\":\"Unknown command\"}");
             send_response(ctx->uart_num, json_response, NULL, 0);
             break;
     }
@@ -782,14 +794,6 @@ static void fs_proxy_task(void *arg)
 
     ESP_LOGI(TAG, "Entering main loop (priority=%d)", FS_PROXY_TASK_PRIORITY);
 
-    // Send startup beacon with magic bytes
-    const char *startup_msg = "UFTE_READY\n";
-    uart_write_bytes(ctx->uart_num, startup_msg, strlen(startup_msg));
-    // Note: Don't use uart_flush() as it may block indefinitely
-
-    uint32_t idle_counter = 0;
-    const uint32_t BEACON_INTERVAL = 50; // Send beacon every 5 seconds (50 * 100ms)
-
     // Main loop: read from UART and process frames
     while (1) {
         uint8_t byte;
@@ -805,13 +809,6 @@ static void fs_proxy_task(void *arg)
                     last_partial_log = now;
                 }
             }
-            // TODO: Beacon disabled for debugging
-            // idle_counter++;
-            // if (idle_counter >= BEACON_INTERVAL) {
-            //     const char *beacon = "FMRB\n";
-            //     uart_write_bytes(ctx->uart_num, beacon, strlen(beacon));
-            //     idle_counter = 0;
-            // }
             continue;
         } else if (len < 0) {
             // Error reading, delay and retry
@@ -824,9 +821,6 @@ static void fs_proxy_task(void *arg)
         if (ctx->rx_len < 50) {
             ESP_LOGD(TAG, "RX byte[%zu]: 0x%02x (%c)", ctx->rx_len, byte, (byte >= 32 && byte < 127) ? byte : '.');
         }
-
-        // Reset idle counter when we receive data
-        idle_counter = 0;
 
         if (byte == FS_PROXY_DELIM) {
             // Frame complete

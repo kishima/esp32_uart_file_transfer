@@ -100,7 +100,7 @@ class SerialClient
     @rx = String.new(encoding: "ASCII-8BIT")
 
     # Perform initial synchronization
-    #sync
+    sync
   end
 
   def configure_tty_raw_mode(port, baud)
@@ -115,12 +115,9 @@ class SerialClient
 
   def close; @sp.close rescue nil; end
 
-  # Synchronization: Clear buffer and wait for magic bytes
-  def sync(retries: 3, timeout: 6.0)
-    # Wait for beacon from server (UFTE UFTE_READY)
-    magic = "UFTE"
-
-    puts "Waiting for server beacon..." if DEBUG_MODE
+  # Synchronization: Send CMD_SYNC and verify response
+  def sync(retries: 3, timeout: 2.0)
+    puts "Synchronizing with ESP32..." if DEBUG_MODE
 
     retries.times do |attempt|
       begin
@@ -140,48 +137,34 @@ class SerialClient
         end
         @rx.clear
 
-        # Simply wait for beacon (don't send anything)
-        deadline = Time.now + timeout
-        buffer = String.new(encoding: "ASCII-8BIT")
+        # Send CMD_SYNC command
+        old_timeout = @timeout_ms
+        @timeout_ms = (timeout * 1000).to_i
 
-        while Time.now < deadline
-          ready = IO.select([@sp], nil, nil, 0.5)
-          next unless ready
-
-          begin
-            chunk = @sp.read_nonblock(1024)
-            next if chunk.nil? || chunk.empty?
-
-            buffer << chunk
-            # Keep last 50 bytes
-            buffer = buffer[-50..-1] if buffer.bytesize > 50
-
-            # Look for magic bytes (FMRB or FMRB_READY)
-            if buffer.include?(magic)
-              puts "✓ Detected server beacon" if DEBUG_MODE
-              @rx.clear
-              return true
-            end
-          rescue IO::WaitReadable, Errno::EAGAIN
-            next
-          rescue EOFError
-            sleep 0.1
-            next
+        begin
+          res = r_sync
+          if res == true || (res.is_a?(Hash) && res["status"] == "ok")
+            puts "✓ Synchronized with ESP32" if DEBUG_MODE
+            @timeout_ms = old_timeout
+            return true
           end
+        rescue => e
+          puts "Sync attempt #{attempt + 1}/#{retries} failed: #{e.message}" if DEBUG_MODE
+        ensure
+          @timeout_ms = old_timeout
         end
 
-        puts "Sync attempt #{attempt + 1}/#{retries} timed out, retrying..." if attempt < retries - 1 && DEBUG_MODE
+        sleep 0.5 if attempt < retries - 1
       rescue => e
-        puts "Sync attempt #{attempt + 1} failed: #{e.message}" if DEBUG_MODE
+        puts "Sync attempt #{attempt + 1} error: #{e.message}" if DEBUG_MODE
       end
-
-      sleep 0.5 if attempt < retries - 1
     end
 
-    raise "Failed to detect server beacon after #{retries} attempts. Is ESP32 running?"
+    raise "Failed to synchronize with ESP32 after #{retries} attempts. Is ESP32 running?"
   end
 
   # --- High-level commands ---
+  def r_sync      = cmd_simple(0x01, {})                 # remote sync
   def r_cd(path)  = cmd_simple(0x11, path: path)         # remote cd
   def r_ls(path=".") = cmd_simple(0x12, path: path)      # remote ls -> entries
   def r_rm(path)  = cmd_simple(0x13, path: path)         # remote rm (file/dir depends on implementation)

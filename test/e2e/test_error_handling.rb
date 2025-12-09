@@ -6,7 +6,6 @@ class TestErrorHandling < Minitest::Test
   def setup
     super
     @client = create_client(timeout: 5.0)
-    # wait_and_sync(@client)  # Disabled: beacon not enabled in firmware
     setup_remote_test_dir(@client)
   end
 
@@ -122,7 +121,6 @@ class TestErrorHandling < Minitest::Test
     @client.close
 
     @client = create_client
-    # wait_and_sync(@client)  # Disabled: beacon not enabled in firmware
 
     # Should work after reconnection
     entries = @client.r_ls("/home")

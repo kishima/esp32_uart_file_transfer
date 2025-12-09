@@ -47,7 +47,7 @@ module TestHelper
 
   # Wait for device to be ready and sync
   def wait_and_sync(client, retries: 3)
-    client.sync(retries: retries, timeout: 10.0)
+    client.sync(retries: retries, timeout: 2.0)
   end
 
   # Calculate file checksum

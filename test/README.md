@@ -27,7 +27,7 @@ sudo usermod -a -G dialout $USER
 Or temporarily:
 
 ```bash
-sudo chmod 666 /dev/ttyUSB0
+sudo chmod 666 /dev/ttyACM0
 ```
 
 ## Running Tests
@@ -35,7 +35,7 @@ sudo chmod 666 /dev/ttyUSB0
 ### Run All Tests (Unit + E2E)
 
 ```bash
-TEST_SERIAL_PORT=/dev/ttyUSB0 rake test
+TEST_SERIAL_PORT=/dev/ttyACM0 rake test
 ```
 
 ### Run Unit Tests Only (No Hardware Required)
@@ -47,20 +47,20 @@ rake test:unit
 ### Run E2E Tests Only
 
 ```bash
-TEST_SERIAL_PORT=/dev/ttyUSB0 rake test:e2e
+TEST_SERIAL_PORT=/dev/ttyACM0 rake test:e2e
 ```
 
 ### Run Individual Test Suites
 
 ```bash
 # File transfer tests only
-TEST_SERIAL_PORT=/dev/ttyUSB0 rake test:file_transfer
+TEST_SERIAL_PORT=/dev/ttyACM0 rake test:file_transfer
 
 # Remote command tests only
-TEST_SERIAL_PORT=/dev/ttyUSB0 rake test:remote_commands
+TEST_SERIAL_PORT=/dev/ttyACM0 rake test:remote_commands
 
 # Error handling tests only
-TEST_SERIAL_PORT=/dev/ttyUSB0 rake test:error_handling
+TEST_SERIAL_PORT=/dev/ttyACM0 rake test:error_handling
 
 # Protocol error unit tests
 rake test:protocol_errors
@@ -156,7 +156,7 @@ rake test
 
 ### Serial Port Access Error
 
-- Verify port exists: `ls -l /dev/ttyUSB*`
+- Verify port exists: `ls -l /dev/ttyACM*`
 - Check permissions: `groups` (verify dialout group membership)
 - Check device connection: `dmesg | tail`
 

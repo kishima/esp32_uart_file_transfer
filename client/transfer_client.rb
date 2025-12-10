@@ -99,6 +99,9 @@ class SerialClient
 
     @rx = String.new(encoding: "ASCII-8BIT")
 
+    # Clear any boot logs from serial buffer (1 second drain)
+    drain_serial_buffer(duration: 1.0)
+
     # Perform initial synchronization
     sync
   end
@@ -114,6 +117,27 @@ class SerialClient
   end
 
   def close; @sp.close rescue nil; end
+
+  # Drain serial buffer to remove boot logs and any residual data
+  def drain_serial_buffer(duration: 1.0)
+    puts "Draining serial buffer for #{duration}s..." if DEBUG_MODE
+    deadline = Time.now + duration
+    total_bytes = 0
+
+    while Time.now < deadline
+      ready = IO.select([@sp], nil, nil, 0.1)
+      next unless ready
+
+      begin
+        chunk = @sp.read_nonblock(4096)
+        total_bytes += chunk.bytesize if chunk
+      rescue IO::WaitReadable, Errno::EAGAIN, EOFError
+        # No more data available
+      end
+    end
+
+    puts "Drained #{total_bytes} bytes from buffer" if DEBUG_MODE
+  end
 
   # Synchronization: Send CMD_SYNC and verify response
   def sync(retries: 3, timeout: 2.0)

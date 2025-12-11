@@ -481,7 +481,7 @@ static void cmd_get(fs_proxy_context_t *ctx, const char *json_params,
     snprintf(response, response_size, "{\"ok\":true,\"eof\":%s,\"bin\":%zu}",
              eof ? "true" : "false", (size_t)bytes_read);
 
-    ESP_LOGD(TAG, "GET - path=%s, offset=%d, bytes_read=%u, eof=%s",
+    ESP_LOGD(TAG, "GET - path=%s, offset=%ld, bytes_read=%u, eof=%s",
              path, offset, bytes_read, eof ? "true" : "false");
 
 cleanup:

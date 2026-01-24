@@ -1,0 +1,495 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>ESP32 Web Serial Client</title>
+<style>
+    body {
+        font-family: system-ui, sans-serif;
+        margin: 16px;
+    }
+
+    button {
+        margin-right: 8px;
+    }
+
+    input[type="text"] {
+        width: 360px;
+    }
+
+    pre {
+        background: #111;
+        color: #ddd;
+        padding: 12px;
+        border-radius: 8px;
+        overflow: auto;
+    }
+
+    .row {
+        margin: 10px 0;
+    }
+</style>
+
+<div class="row">
+    <button id="connect">Connect</button>
+    <button id="sync" disabled>Sync</button>
+</div>
+
+<div class="row">
+    Remote path: <input id="path" type="text" value="/assets" />
+    <button id="ls" disabled>ls</button>
+    <button id="cd" disabled>cd</button>
+    <button id="rm" disabled>rm</button>
+</div>
+
+<div class="row">
+    <input id="file" type="file" />
+    Remote dest: <input id="dest" type="text" value="upload.bin" />
+    <button id="put" disabled>put</button>
+</div>
+
+<div class="row">
+    Remote src: <input id="src" type="text" value="/assets/upload.bin" />
+    <button id="get" disabled>get</button>
+</div>
+
+<pre id="log"></pre>
+
+<script>
+    // =====================
+    // Protocol Constants
+    // =====================
+    // Command codes
+    const CMD_SYNC = 0x01;
+    const CMD_CD = 0x11;
+    const CMD_LS = 0x12;
+    const CMD_RM = 0x13;
+    const CMD_GET = 0x21;
+    const CMD_PUT = 0x22;
+    const CMD_REBOOT = 0x31;
+
+    // COBS encoding constants
+    const COBS_MAX_CODE = 0xFF;
+    const FRAME_DELIMITER = 0x00;
+
+    // CRC32 constants
+    const CRC32_POLYNOMIAL = 0xEDB88320;
+    const CRC32_INIT = 0xFFFFFFFF;
+
+    // Serial and protocol settings
+    const SERIAL_BAUD_RATE = 115200;
+    const DEFAULT_TIMEOUT_MS = 5000;
+    const WRITE_CHUNK_SIZE = 16384;  // 16KB
+    const PUT_CHUNK_SIZE = 1024;     // 1KB
+    const POLL_INTERVAL_MS = 5;
+
+    // Frame structure offsets
+    const OFFSET_CMD = 0;
+    const OFFSET_JSON_LEN = 1;
+    const OFFSET_JSON_DATA = 3;
+    const CRC_SIZE = 4;
+    const MIN_FRAME_SIZE = 5;  // cmd(1) + json_len(2) + crc(4) = 7, but body must have at least 1 byte
+
+    // =====================
+    // Utilities
+    // =====================
+    const logEl = document.getElementById("log");
+    function log(...a) { logEl.textContent += a.join(" ") + "\n"; logEl.scrollTop = logEl.scrollHeight; }
+
+    function u8(...arr) { return new Uint8Array(arr); }
+    function concatU8(a, b) {
+        const out = new Uint8Array(a.length + b.length);
+        out.set(a, 0); out.set(b, a.length);
+        return out;
+    }
+    function toHex(u8a, max = 32) {
+        const n = Math.min(u8a.length, max);
+        let s = [];
+        for (let i = 0; i < n; i++) s.push(u8a[i].toString(16).padStart(2, "0"));
+        return s.join(" ") + (u8a.length > max ? " ..." : "");
+    }
+
+    function be16(n) { return u8((n >> 8) & 0xff, n & 0xff); }
+    function be32(n) {
+        return u8((n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff);
+    }
+    function readBe16(buf, off) { return (buf[off] << 8) | buf[off + 1]; }
+    function readBe32(buf, off) {
+        return ((buf[off] << 24) >>> 0) | (buf[off + 1] << 16) | (buf[off + 2] << 8) | buf[off + 3];
+    }
+
+    // =====================
+    // CRC32 (Cyclic Redundancy Check 32)
+    // bodyに対してZlib.crc32相当
+    // =====================
+    const CRC32_TABLE = (() => {
+        const tbl = new Uint32Array(256);
+        for (let i = 0; i < 256; i++) {
+            let c = i;
+            for (let k = 0; k < 8; k++) {
+                c = (c & 1) ? (CRC32_POLYNOMIAL ^ (c >>> 1)) : (c >>> 1);
+            }
+            tbl[i] = c >>> 0;
+        }
+        return tbl;
+    })();
+    function crc32(u8a) {
+        let c = CRC32_INIT;
+        for (let i = 0; i < u8a.length; i++) {
+            c = CRC32_TABLE[(c ^ u8a[i]) & 0xFF] ^ (c >>> 8);
+        }
+        return (c ^ CRC32_INIT) >>> 0;
+    }
+
+    // =====================
+    // COBS (Consistent Overhead Byte Stuffing)
+    // Ruby版と同等
+    // =====================
+    function cobsEncode(data) {
+        // data: Uint8Array
+        let out = [];
+        let codeIndex = 0;
+        out.push(FRAME_DELIMITER); // placeholder
+        let code = 1;
+
+        for (let i = 0; i < data.length; i++) {
+            const b = data[i];
+            if (b === FRAME_DELIMITER) {
+                out[codeIndex] = code;
+                codeIndex = out.length;
+                out.push(FRAME_DELIMITER);
+                code = 1;
+            } else {
+                out.push(b);
+                code++;
+                if (code === COBS_MAX_CODE) {
+                    out[codeIndex] = code;
+                    codeIndex = out.length;
+                    out.push(FRAME_DELIMITER);
+                    code = 1;
+                }
+            }
+        }
+        out[codeIndex] = code;
+        return new Uint8Array(out);
+    }
+
+    function cobsDecode(data) {
+        // data: Uint8Array
+        let out = [];
+        let i = 0;
+        while (i < data.length) {
+            const code = data[i];
+            if (!code) throw new Error("COBS decode error");
+            i++;
+            for (let k = 0; k < code - 1; k++) {
+                if (i >= data.length) throw new Error("COBS overrun");
+                out.push(data[i]);
+                i++;
+            }
+            if (code < COBS_MAX_CODE && i < data.length) out.push(FRAME_DELIMITER);
+        }
+        return new Uint8Array(out);
+    }
+
+    // =====================
+    // Serial Client (Web Serial)
+    // Frame: COBS( body + crc32(body)[4BE] ) + 0x00
+    // body: [cmd:1][json_len:2BE][json bytes][bin...]
+    // =====================
+    class RxBuffer {
+        constructor() { this.buf = new Uint8Array(0); }
+        push(chunk) {
+            const b = new Uint8Array(this.buf.length + chunk.length);
+            b.set(this.buf, 0); b.set(chunk, this.buf.length);
+            this.buf = b;
+        }
+        // FRAME_DELIMITER でフレームを切り出す（Ruby版と同様）
+        popDelimitedFrame() {
+            const idx = this.buf.indexOf(FRAME_DELIMITER);
+            if (idx === -1) return null;
+            const frame = this.buf.slice(0, idx);     // delimiter含まない
+            this.buf = this.buf.slice(idx + 1);       // delimiterを捨てる
+            return frame;
+        }
+    }
+
+    class WebSerialClient {
+        constructor() {
+            this.port = null;
+            this.reader = null;
+            this.writer = null;
+            this.rx = new RxBuffer();
+            this.readLoopRunning = false;
+            this.timeoutMs = DEFAULT_TIMEOUT_MS;
+        }
+
+        async connect() {
+            if (!("serial" in navigator)) throw new Error("Web Serial API not available. Use Chrome/Edge desktop.");
+            this.port = await navigator.serial.requestPort();
+            await this.port.open({ baudRate: SERIAL_BAUD_RATE }); // USB CDCなら見かけ上の値
+            this.writer = this.port.writable.getWriter();
+            this.reader = this.port.readable.getReader();
+            this.startReadLoop();
+        }
+
+        startReadLoop() {
+            if (this.readLoopRunning) return;
+            this.readLoopRunning = true;
+            (async () => {
+                try {
+                    while (this.readLoopRunning) {
+                        const { value, done } = await this.reader.read();
+                        if (done) break;
+                        if (value) this.rx.push(value);
+                    }
+                } catch (e) {
+                    log("read error:", e.message);
+                } finally {
+                    this.readLoopRunning = false;
+                }
+            })();
+        }
+
+        async close() {
+            this.readLoopRunning = false;
+            try { await this.reader?.cancel(); } catch { }
+            try { this.reader?.releaseLock(); } catch { }
+            try { this.writer?.releaseLock(); } catch { }
+            try { await this.port?.close(); } catch { }
+        }
+
+        buildPacket(cmd, jsonObjOrJsonString, binU8 = null) {
+            const jsonStr = (typeof jsonObjOrJsonString === "string") ? jsonObjOrJsonString : JSON.stringify(jsonObjOrJsonString);
+            const jsonBytes = new TextEncoder().encode(jsonStr); // UTF-8
+            const bodyHead = concatU8(u8(cmd), be16(jsonBytes.length));
+            let body = concatU8(bodyHead, jsonBytes);
+            if (binU8 && binU8.length) body = concatU8(body, binU8);
+
+            const crc = crc32(body);
+            const raw = concatU8(body, be32(crc));
+            const enc = cobsEncode(raw);
+            // + delimiter
+            return concatU8(enc, u8(FRAME_DELIMITER));
+        }
+
+        parseResponseFrame(frameCobsU8) {
+            // frameCobsU8: delimiter除去済みのCOBSバイト列
+            const raw = cobsDecode(frameCobsU8);
+            if (raw.length < MIN_FRAME_SIZE) throw new Error("Short frame");
+
+            const body = raw.slice(0, raw.length - CRC_SIZE);
+            const crcGot = readBe32(raw, raw.length - CRC_SIZE);
+            const crcExp = crc32(body);
+            if (crcGot !== crcExp) throw new Error("CRC error");
+
+            const code = body[OFFSET_CMD];
+            const jsonLen = readBe16(body, OFFSET_JSON_LEN);
+            const jsonBytes = body.slice(OFFSET_JSON_DATA, OFFSET_JSON_DATA + jsonLen);
+            const metaText = new TextDecoder("utf-8").decode(jsonBytes);
+            let meta;
+            try { meta = JSON.parse(metaText); } catch { meta = { ok: false, err: "bad_json" }; }
+
+            let data = null;
+            if (meta && Number.isInteger(meta.bin)) {
+                data = body.slice(OFFSET_JSON_DATA + jsonLen, OFFSET_JSON_DATA + jsonLen + meta.bin);
+            }
+            return { code, meta, data };
+        }
+
+        async writeAll(u8a) {
+            // 大きいwriteの保険：分割送信
+            for (let off = 0; off < u8a.length; off += WRITE_CHUNK_SIZE) {
+                await this.writer.write(u8a.slice(off, off + WRITE_CHUNK_SIZE));
+            }
+        }
+
+        async readOneResponse(timeoutMs = this.timeoutMs) {
+            const deadline = performance.now() + timeoutMs;
+            while (performance.now() < deadline) {
+                const frame = this.rx.popDelimitedFrame();
+                if (!frame) { await new Promise(r => setTimeout(r, POLL_INTERVAL_MS)); continue; }
+                return this.parseResponseFrame(frame);
+            }
+            throw new Error("Timeout waiting frame");
+        }
+
+        // --- High-level commands (Ruby版と同等) ---
+        async r_sync() { return await this.cmdSimple(CMD_SYNC, {}); }
+        async r_cd(path) { return await this.cmdSimple(CMD_CD, { path }); }
+        async r_ls(path = ".") { return await this.cmdSimple(CMD_LS, { path }); }
+        async r_rm(path) { return await this.cmdSimple(CMD_RM, { path }); }
+        async r_reboot() { return await this.cmdSimple(CMD_REBOOT, {}); }
+
+        async cmdSimple(cmd, obj) {
+            const meta = await this.request(cmd, obj);
+            if (!meta.ok) throw new Error("Remote error: " + JSON.stringify(meta));
+            return meta.entries ?? true;
+        }
+
+        async request(cmd, objOrJson, binU8 = null) {
+            const pkt = this.buildPacket(cmd, objOrJson, binU8);
+            await this.writeAll(pkt);
+            const { meta } = await this.readOneResponse();
+            return meta;
+        }
+
+        async requestBin(cmd, objOrJson, binU8 = null) {
+            const pkt = this.buildPacket(cmd, objOrJson, binU8);
+            await this.writeAll(pkt);
+            const { meta, data } = await this.readOneResponse();
+            return { meta, data };
+        }
+
+        // GET: payload json {path, off} , response meta {ok,eof,bin}, body includes bin bytes
+        async get(remotePath) {
+            let off = 0;
+            const chunks = [];
+            for (; ;) {
+                const { meta, data } = await this.requestBin(CMD_GET, JSON.stringify({ path: remotePath, off }));
+                if (!meta.ok) throw new Error("GET failed: " + JSON.stringify(meta));
+                if (data && data.length) {
+                    chunks.push(data);
+                    off += data.length;
+                }
+                if (meta.eof) break;
+            }
+            // concat
+            let total = 0; for (const c of chunks) total += c.length;
+            const out = new Uint8Array(total);
+            let p = 0; for (const c of chunks) { out.set(c, p); p += c.length; }
+            return out;
+        }
+
+
+        // PUT: payload json {path, off} + bin
+        // EOF条件: 空binを送る
+        async put(localBytesU8, remotePath, chunkSize = PUT_CHUNK_SIZE) {
+            let off = 0;
+
+            // 1) 本体送信
+            while (off < localBytesU8.length) {
+                const end = Math.min(off + chunkSize, localBytesU8.length);
+                const bin = localBytesU8.slice(off, end);
+
+                const meta = await this.request(
+                    CMD_PUT,
+                    JSON.stringify({ path: remotePath, off }),
+                    bin
+                );
+                if (!meta.ok) throw new Error("PUT failed: " + JSON.stringify(meta));
+
+                off = end;
+            }
+
+            // 2) EOFフレーム（空bin）
+            {
+                const meta = await this.request(
+                    CMD_PUT,
+                    JSON.stringify({ path: remotePath, off }),
+                    new Uint8Array(0)
+                );
+                if (!meta.ok) throw new Error("PUT EOF failed: " + JSON.stringify(meta));
+            }
+
+            return true;
+        }
+    }
+
+    // =====================
+    // UI wiring
+    // =====================
+    let cli = new WebSerialClient();
+
+    function enableUI(on) {
+        for (const id of ["sync", "ls", "cd", "rm", "put", "get"]) {
+            document.getElementById(id).disabled = !on;
+        }
+    }
+
+    document.getElementById("connect").onclick = async () => {
+        try {
+            await cli.connect();
+            log("connected");
+            enableUI(true);
+        } catch (e) {
+            log("connect error:", e.message);
+        }
+    };
+
+    document.getElementById("sync").onclick = async () => {
+        try {
+            const r = await cli.r_sync();
+            log("sync:", JSON.stringify(r));
+        } catch (e) {
+            log("sync error:", e.message);
+        }
+    };
+
+    document.getElementById("ls").onclick = async () => {
+        try {
+            const path = document.getElementById("path").value || ".";
+            const entries = await cli.r_ls(path);
+            log(`ls ${path}:`);
+            for (const e of entries) {
+                const mark = (e.t === "d") ? "/" : "";
+                const size = e.s ?? 0;
+                log(`  ${e.n}${mark}\t${size}`);
+            }
+        } catch (e) {
+            log("ls error:", e.message);
+        }
+    };
+
+    document.getElementById("cd").onclick = async () => {
+        try {
+            const path = document.getElementById("path").value || "/";
+            await cli.r_cd(path);
+            log("cd ok:", path);
+        } catch (e) {
+            log("cd error:", e.message);
+        }
+    };
+
+    document.getElementById("rm").onclick = async () => {
+        try {
+            const path = document.getElementById("path").value;
+            await cli.r_rm(path);
+            log("rm ok:", path);
+        } catch (e) {
+            log("rm error:", e.message);
+        }
+    };
+
+    document.getElementById("put").onclick = async () => {
+        try {
+            const file = document.getElementById("file").files[0];
+            if (!file) { log("put: choose a file first"); return; }
+            const dest = document.getElementById("dest").value || file.name;
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            log(`put start: ${file.name} (${bytes.length} bytes) -> ${dest}`);
+            await cli.put(bytes, dest, PUT_CHUNK_SIZE);
+            log("put done");
+        } catch (e) {
+            log("put error:", e.message);
+        }
+    };
+
+    document.getElementById("get").onclick = async () => {
+        try {
+            const src = document.getElementById("src").value;
+            if (!src) { log("get: set remote src"); return; }
+            log("get start:", src);
+            const bytes = await cli.get(src);
+            log(`get done: ${bytes.length} bytes`);
+
+            // ダウンロード保存（ブラウザ標準）
+            const blob = new Blob([bytes], { type: "application/octet-stream" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = src.split("/").pop() || "download.bin";
+            a.click();
+            URL.revokeObjectURL(a.href);
+        } catch (e) {
+            log("get error:", e.message);
+        }
+    };
+</script>
